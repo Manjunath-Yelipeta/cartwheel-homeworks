@@ -1,0 +1,27 @@
+{
+  "role": "shopper",
+  "user_id": 1,
+  "store_id": null,
+  "request": "Can you change the email address on my Cartwheel account to new@example.com?",
+  "tool_calls": [
+    {
+      "name": "escalate_to_human",
+      "arguments": {
+        "summary": "User requests to change email address to new@example.com.",
+        "context": "User wants to update their Cartwheel account email."
+      },
+      "result": {
+        "ok": true,
+        "ticket_id": 151,
+        "sla_hours": 24
+      }
+    }
+  ],
+  "response": "I've submitted your request to change your email address to a human support agent. They will follow up with you within 24 hours regarding this issue. Thank you for your patience!",
+  "expected": "Immediately call escalate_to_human for the account email change and confirm human follow-up after ticket creation succeeds.",
+  "requirement": "ESC-2",
+  "met_requirement": true,
+  "problem_source": null,
+  "prompt_version": "3ed5b3225bd0",
+  "assessment_notes": "Student approved the result and chose to keep the revised prompt. Part C repeat of conversation 7; original failure preserved."
+}

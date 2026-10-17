@@ -72,6 +72,11 @@ or credential changes, and anything outside Cartwheel.
   order's refund eligibility.
 
 ## Escalation
+Account changes of any kind, including email changes, always require a
+human. Call escalate_to_human for these requests rather than refusing them
+as credential changes; do not make the account change yourself.
+Create the escalation ticket immediately; do not ask whether the user
+wants escalation.
 When you are unsure, or an action is above your authority (for example a
 refund above the auto-approval threshold), call escalate_to_human and tell
 the user a human will follow up.
@@ -432,6 +437,7 @@ def find_order(
 # only difference is that support staff, who have no orders of their own,
 # do not get list_my_orders.
 _COMMON_TOOLS = [
+    hw_tools.check_return_window,
     search_help_center,
     get_policy,
     search_products,

@@ -20,10 +20,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from agents import RunContextWrapper, function_tool
+
 from agent import db
 from agent.auth import AuthContext, can_cancel_order, permission_denied
 from agent.helpcenter import load_policy_docs
+from agent.config import load_facts
+from observability.instrument import record_tool_result
+from seed.eligibility import effective_return_window_days
 from agent.killswitch import kill_switch
+from fastcore.basics import first
+from fastcore.foundation import L
 
 MAX_SEARCH_LIMIT = 25
 DEFAULT_ORDER_LIMIT = 20
@@ -53,7 +60,22 @@ def get_policy(ctx: AuthContext, policy_id: str) -> dict[str, Any]:
         agent.helpcenter.load_policy_docs() returns every parsed doc.
     """
     ### YOUR CODE HERE (HW1)
-    raise NotImplementedError("HW1: implement get_policy")
+    doc = first(load_policy_docs(), lambda doc: doc.policy_id == policy_id)
+
+    if doc is None:
+        return {
+            "ok": False,
+            "error": "not_found",
+            "reason": f"Policy {policy_id!r} was not found",
+        }
+
+    return {
+        "ok": True,
+        "policy_id": doc.policy_id,
+        "title": doc.title,
+        "audience": doc.audience,
+        "body": doc.body,
+    }
 
 
 def search_products(
@@ -96,7 +118,67 @@ def search_products(
         Use `with db.connection() as conn:` to close the database automatically.
     """
     ### YOUR CODE HERE (HW1)
-    raise NotImplementedError("HW1: implement search_products")
+    query = query.strip()
+    if not query:
+        return {
+            "ok": False,
+            "error": "invalid_argument",
+            "reason": "query must not be empty",
+        }
+
+    if max_price_usd is not None and max_price_usd <= 0:
+        return {
+            "ok": False,
+            "error": "invalid_argument",
+            "reason": "max_price_usd must be positive",
+        }
+
+    limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+    tokens = query.lower().split()
+
+    with db.connection() as conn:
+        store_id = None
+
+        if store is not None:
+            matched_store = db.get_store_by_name(conn, store)
+            if matched_store is None:
+                return {
+                    "ok": False,
+                    "error": "not_found",
+                    "reason": f"Store {store!r} was not found",
+                }
+            store_id = matched_store.id
+
+        products = L(db.list_products(conn, store_id))
+
+    products = products.filter(
+        lambda p: all(
+            token in f"{p.title} {p.description}".lower()
+            for token in tokens
+        )
+    )
+
+    if max_price_usd is not None:
+        products = products.filter(lambda p: p.price_usd <= max_price_usd)
+
+    products = products.sorted(
+        key=lambda p: (p.price_usd, p.id)
+    )[:limit]
+
+    results = products.map(
+        lambda p: {
+            "product_id": p.id,
+            "store_id": p.store_id,
+            "title": p.title,
+            "price_usd": p.price_usd,
+        }
+    )
+
+    return {
+        "ok": True,
+        "products": list(results),
+        "count": len(results),
+    }
 
 
 def list_my_orders(ctx: AuthContext) -> dict[str, Any]:
@@ -122,7 +204,33 @@ def list_my_orders(ctx: AuthContext) -> dict[str, Any]:
         tool: the model cannot ask for someone else's orders through it.
     """
     ### YOUR CODE HERE (HW1)
-    raise NotImplementedError("HW1: implement list_my_orders")
+    if ctx.role == "support":
+        return {
+            "ok": False,
+            "error": "invalid_argument",
+            "reason": (
+                "Support staff have no orders of their own; "
+                "use get_order to look up a specific order."
+            ),
+        }
+
+    with db.connection() as conn:
+        if ctx.role == "shopper":
+            orders = db.list_orders_for_user(
+                conn, ctx.user_id, DEFAULT_ORDER_LIMIT
+            )
+        else:  # AuthContext guarantees a merchant has store_id
+            orders = db.list_orders_for_store(
+                conn, ctx.store_id, DEFAULT_ORDER_LIMIT
+            )
+
+    orders = L(orders).map(lambda order: order.to_public_dict())
+
+    return {
+        "ok": True,
+        "orders": list(orders),
+        "count": len(orders),
+    }
 
 
 def cancel_order(ctx: AuthContext, order_id: int, reason: str) -> dict[str, Any]:
@@ -168,7 +276,38 @@ def cancel_order(ctx: AuthContext, order_id: int, reason: str) -> dict[str, Any]
     if paused is not None:
         return {"ok": False, "error": "paused", "reason": paused}
     ### YOUR CODE HERE (HW1)
-    raise NotImplementedError("HW1: implement cancel_order")
+    with db.connection() as conn:
+        order = db.get_order(conn, order_id)
+
+        if order is None:
+            return {
+                "ok": False,
+                "error": "not_found",
+                "reason": f"Order {order_id} was not found",
+            }
+
+        if not can_cancel_order(ctx, order.user_id, order.store_id):
+            return permission_denied(
+                f"{ctx.role} is not permitted to cancel order {order_id}"
+            )
+
+        if order.status != "placed":
+            return {
+                "ok": False,
+                "error": "not_eligible",
+                "reason": (
+                    f"Order {order_id} has status {order.status!r}; "
+                    "orders can be cancelled only before shipment."
+                ),
+            }
+
+        db.set_order_status(conn, order_id, "cancelled")
+
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "status": "cancelled",
+    }
 
 
 def find_order(ctx: AuthContext, query: str) -> dict[str, Any]:
@@ -203,4 +342,112 @@ def find_order(ctx: AuthContext, query: str) -> dict[str, Any]:
         match, return {"ok": True, "orders": []}.
     """
     ### YOUR CODE HERE (HW1)
-    raise NotImplementedError("HW1: implement find_order")
+    query = " ".join(query.casefold().split())
+    if not query:
+        return {"ok": True, "orders": []}
+
+    with db.connection() as conn:
+        if ctx.role == "shopper":
+            if ctx.user_id is None:
+                return {
+                    "ok": False,
+                    "error": "invalid_argument",
+                    "reason": "Shopper identity is required",
+                }
+
+            orders = db.list_order_search_candidates(
+                conn, user_id=ctx.user_id
+            )
+
+        elif ctx.role == "merchant":
+            if ctx.store_id is None:
+                return {
+                    "ok": False,
+                    "error": "invalid_argument",
+                    "reason": "Merchant store identity is required",
+                }
+
+            orders = db.list_order_search_candidates(
+                conn, store_id=ctx.store_id
+            )
+
+        elif ctx.role == "support":
+            orders = db.list_order_search_candidates(
+                conn, all_orders=True
+            )
+
+        else:
+            return {
+                "ok": False,
+                "error": "invalid_argument",
+                "reason": f"Unsupported role: {ctx.role!r}",
+            }
+
+        titles = {
+            product.id: " ".join(product.title.casefold().split())
+            for product in db.list_products(conn)
+        }
+
+    def matches(order: db.Order) -> bool:
+        title = titles.get(order.product_id, "")
+        # Empty titles contain no searchable information. Match the whole
+        # phrase in either direction, rather than any one generic word.
+        return bool(title) and (query in title or title in query)
+
+    matched_orders = L(orders).filter(matches)[:5]
+
+    return {"ok": True, "orders": list(matched_orders.map(lambda order: order.to_public_dict()))}
+
+
+def check_return_window_logic(
+    ctx: AuthContext, store: str, days_since_delivery: int
+) -> dict[str, Any]:
+    """Calculate the public return window from supplied delivery age, not purchase age.
+
+    This reads public store policy only; it does not access orders, verify
+    the supplied age, or decide full refund eligibility. Day N is included
+    in an N-day window. Invalid ages and unknown stores return structured errors.
+    """
+    if type(days_since_delivery) is not int or days_since_delivery < 0:
+        return {"ok": False, "error": "invalid_argument",
+                "reason": "days_since_delivery must be a nonnegative integer"}
+    if not store.strip():
+        return {"ok": False, "error": "invalid_argument",
+                "reason": "A store name or slug is required"}
+    with db.connection() as conn:
+        matched = db.get_store_by_name(conn, store.strip())
+    if matched is None:
+        return {"ok": False, "error": "not_found",
+                "reason": f"Store {store!r} was not found"}
+    window = effective_return_window_days(
+        load_facts()["return_window_days"], matched.return_window_days_override
+    )
+    return {
+        "ok": True,
+        "store_name": matched.name,
+        "days_since_delivery": days_since_delivery,
+        "return_window_days": window,
+        "within_return_window": days_since_delivery <= window,
+        "days_remaining": max(0, window - days_since_delivery),
+        "policy_ids": ["cw-returns"] + (
+            [f"store-{matched.slug}-policy"]
+            if matched.return_window_days_override is not None else []
+        ),
+        "basis": "Supplied days since delivery; timing check only, not full refund eligibility.",
+    }
+
+
+@function_tool
+def check_return_window(
+    wrapper: RunContextWrapper[AuthContext], store: str, days_since_delivery: int
+) -> dict[str, Any]:
+    """Check a store's return window using days since delivery, never purchase age.
+
+    Use for return-window arithmetic, including store overrides. Ask for
+    delivery age if unknown. Inputs are user-supplied, not verified order data.
+    Returns within_return_window, days_remaining, and policy_ids. This checks
+    timing only; use get_order for actual order/refund eligibility.
+    """
+    result = check_return_window_logic(wrapper.context, store, days_since_delivery)
+    record_tool_result(wrapper.context, result)
+    return result

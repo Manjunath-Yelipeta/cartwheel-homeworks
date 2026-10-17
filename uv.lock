@@ -238,6 +238,7 @@ source = { editable = "." }
 dependencies = [
     { name = "docetl" },
     { name = "fastapi" },
+    { name = "fastcore" },
     { name = "langfuse" },
     { name = "litellm" },
     { name = "numpy" },
@@ -264,6 +265,7 @@ dev = [
 requires-dist = [
     { name = "docetl", specifier = ">=0.2" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "fastcore", specifier = ">=2.2.33" },
     { name = "gepa", marker = "extra == 'optimization'", specifier = "==0.1.4" },
     { name = "langfuse", specifier = ">=3.0,<4" },
     { name = "litellm", specifier = ">=1.70" },
@@ -685,6 +687,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d3/af/a5f50ccfa659ec1802cb4ca842c23f06d906a8cc9aef6016a2caeea3d4ed/fastapi-0.139.0.tar.gz", hash = "sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145", size = 423016, upload-time = "2026-07-01T16:35:33.436Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/7c/8e3c6ad324ea5cb36604fc3f968554887891c316d9dfde57761611d907ad/fastapi-0.139.0-py3-none-any.whl", hash = "sha256:cf15e1e9e667ddb0ad63811e60bd11390d1aac838ca4a7a23f421807b2308189", size = 130339, upload-time = "2026-07-01T16:35:32.19Z" },
+]
+
+[[package]]
+name = "fastcore"
+version = "2.2.33"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/f4/a03f290cb0d1aedcf837c51b2be193a28dcc437697f5a57441f16d2c6a27/fastcore-2.2.33.tar.gz", hash = "sha256:919cc6d182e633a206238bfaacb39f37b7da985974568121347eedf0bec602c0", size = 145347, upload-time = "2026-10-05T06:56:55.208Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/77/687142707e4ff6b11c63f10dba0562e1be08eb214eaca9b46eab2f77a1fe/fastcore-2.2.33-py3-none-any.whl", hash = "sha256:2c29d35263d88d21d6c3c5ddef92fe3547161e4af0d3efcd324a6277de1a4fba", size = 152034, upload-time = "2026-10-05T06:56:53.423Z" },
 ]
 
 [[package]]

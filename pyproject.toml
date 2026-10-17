@@ -5,6 +5,7 @@ description = "Course repository for the Cartwheel support agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastcore>=2.2.33",
     "openai-agents>=0.2",
     "litellm>=1.70",
     "langfuse>=3.0,<4",
